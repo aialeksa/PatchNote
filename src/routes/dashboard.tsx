@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 
 export const Route = createFileRoute("/dashboard")({
@@ -15,8 +15,15 @@ type Release = {
   published: number;
 };
 
+type SubscriptionInfo = {
+  plan: string | null;
+  status: string;
+  currentPeriodEnd?: string;
+};
+
 function DashboardPage() {
   const navigate = useNavigate();
+  const search = useSearch({ from: "/dashboard" }) as { checkout?: string; session_id?: string };
   const [user, setUser] = useState<{ id: number; email: string; name: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [waitlistCount, setWaitlistCount] = useState(0);
@@ -31,6 +38,9 @@ function DashboardPage() {
   const [fetchError, setFetchError] = useState("");
   const [fetchSuccess, setFetchSuccess] = useState(false);
   const [lastCommitCount, setLastCommitCount] = useState(0);
+  const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
+  const [subscribing, setSubscribing] = useState<string | null>(null);
+  const [checkoutMsg, setCheckoutMsg] = useState("");
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -51,7 +61,39 @@ function DashboardPage() {
       .catch(() => {});
 
     fetchReleases();
+    fetchSubscription();
   }, []);
+
+  // Handle Stripe checkout redirect
+  useEffect(() => {
+    if (search.checkout === "success" && search.session_id) {
+      setCheckoutMsg("Verifying payment...");
+      fetch("/api/stripe/verify-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: search.session_id }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success) {
+            setCheckoutMsg(`✅ Payment confirmed! You're on the ${data.plan} plan.`);
+            fetchSubscription();
+          } else {
+            setCheckoutMsg(`❌ Payment verification failed: ${data.error}`);
+          }
+        })
+        .catch(() => setCheckoutMsg("❌ Could not verify payment. Contact support."));
+    } else if (search.checkout === "cancel") {
+      setCheckoutMsg("Checkout cancelled. You can try again anytime.");
+    }
+  }, [search.checkout, search.session_id]);
+
+  const fetchSubscription = () => {
+    fetch("/api/stripe/subscription")
+      .then((r) => r.json())
+      .then((data) => setSubscription(data))
+      .catch(() => {});
+  };
 
   const fetchReleases = () => {
     fetch("/api/releases")
@@ -82,11 +124,24 @@ function DashboardPage() {
     setGenerating(false);
   };
 
-  const handleLogout = async () => {
+  const handleSubscribe = async (plan: string) => {
+    setSubscribing(plan);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {}
-    navigate({ to: "/" });
+      const res = await fetch("/api/stripe/create-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setCheckoutMsg("Failed to start checkout. Try again.");
+      }
+    } catch {
+      setCheckoutMsg("Failed to start checkout. Try again.");
+    }
+    setSubscribing(null);
   };
 
   const handleFetchCommits = () => {
@@ -125,6 +180,13 @@ function DashboardPage() {
       });
   };
 
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {}
+    navigate({ to: "/" });
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-gray-50">
@@ -135,6 +197,9 @@ function DashboardPage() {
 
   if (!user) return null;
 
+  const isActive = subscription?.status === "active";
+  const planLabel = subscription?.plan || "free";
+
   return (
     <div className="min-h-dvh bg-gray-50">
       {/* Dashboard Nav */}
@@ -143,8 +208,12 @@ function DashboardPage() {
           <div className="flex items-center gap-3">
             <a href="/" className="text-xl">📝</a>
             <span className="text-lg font-bold tracking-tight">PatchNotes</span>
-            <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700 border border-indigo-100">
-              Beta
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium border ${
+              isActive
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                : "bg-amber-50 text-amber-700 border-amber-200"
+            }`}>
+              {isActive ? planLabel : "Free"}
             </span>
           </div>
           <div className="flex items-center gap-4">
@@ -160,6 +229,13 @@ function DashboardPage() {
       </header>
 
       <main className="mx-auto max-w-5xl px-6 py-12">
+        {/* Checkout message */}
+        {checkoutMsg && (
+          <div className="mb-6 rounded-2xl border border-gray-100 bg-white p-4 text-sm">
+            {checkoutMsg}
+          </div>
+        )}
+
         {/* Welcome */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">
@@ -175,7 +251,7 @@ function DashboardPage() {
           <StatCard icon="📋" value={`${waitlistCount}`} label="Waitlist" />
           <StatCard icon="🔗" value="0" label="Repos" />
           <StatCard icon="📝" value={`${releases.length}`} label="Notes" />
-          <StatCard icon="⚡" value="30s" label="Avg. review time" />
+          <StatCard icon={isActive ? "✅" : "🔒"} value={isActive ? planLabel : "Free"} label="Plan" />
         </div>
 
         {/* Tabs */}
@@ -340,6 +416,43 @@ function DashboardPage() {
           </div>
         )}
 
+        {/* Pricing section */}
+        {!isActive && (
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 mt-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Upgrade your plan</h2>
+            <p className="text-sm text-gray-500 mb-6">
+              Choose a plan that fits your team. All plans include the full release note generator.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <PricingCard
+                name="Starter"
+                price="$29/mo"
+                features={["1 repository", "1 tone", "Basic changelog"]}
+                cta="Subscribe"
+                onSubscribe={() => handleSubscribe("starter")}
+                loading={subscribing === "starter"}
+              />
+              <PricingCard
+                name="Team"
+                price="$99/mo"
+                features={["5 repositories", "3 tones", "Multi-channel publish", "GitHub auto-fetch"]}
+                cta="Subscribe"
+                popular={true}
+                onSubscribe={() => handleSubscribe("team")}
+                loading={subscribing === "team"}
+              />
+              <PricingCard
+                name="Scale"
+                price="$299/mo"
+                features={["Unlimited repos", "Custom branding", "API access", "Priority support"]}
+                cta="Subscribe"
+                onSubscribe={() => handleSubscribe("scale")}
+                loading={subscribing === "scale"}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Connect a GitHub repo */}
         <div className="rounded-2xl border border-gray-100 bg-white p-6 mt-6">
           <div className="flex items-center justify-between mb-4">
@@ -386,6 +499,45 @@ function StatCard({ icon, value, label }: { icon: string; value: string; label: 
       <span className="text-xl">{icon}</span>
       <p className="mt-1 text-2xl font-bold text-gray-900">{value}</p>
       <p className="text-xs text-gray-500">{label}</p>
+    </div>
+  );
+}
+
+function PricingCard({
+  name, price, features, cta, popular, onSubscribe, loading
+}: {
+  name: string; price: string; features: string[]; cta: string;
+  popular?: boolean; onSubscribe: () => void; loading: boolean;
+}) {
+  return (
+    <div className={`rounded-xl border-2 p-5 ${
+      popular ? "border-indigo-400 bg-indigo-50/30" : "border-gray-100"
+    }`}>
+      {popular && (
+        <span className="inline-block rounded-full bg-indigo-100 px-3 py-0.5 text-xs font-semibold text-indigo-700 mb-3">
+          Most popular
+        </span>
+      )}
+      <h3 className="text-lg font-bold text-gray-900">{name}</h3>
+      <p className="text-2xl font-bold text-gray-900 mt-1">{price}</p>
+      <ul className="mt-4 space-y-2">
+        {features.map((f, i) => (
+          <li key={i} className="text-sm text-gray-600 flex items-center gap-2">
+            <span className="text-emerald-500">✓</span> {f}
+          </li>
+        ))}
+      </ul>
+      <button
+        onClick={onSubscribe}
+        disabled={loading}
+        className={`mt-6 w-full rounded-xl py-2.5 text-sm font-semibold transition-colors ${
+          popular
+            ? "bg-indigo-600 text-white hover:bg-indigo-500"
+            : "bg-gray-900 text-white hover:bg-gray-800"
+        } disabled:opacity-50`}
+      >
+        {loading ? "Loading..." : cta}
+      </button>
     </div>
   );
 }
