@@ -32,7 +32,7 @@ function DashboardPage() {
   const [tone, setTone] = useState("technical");
   const [generating, setGenerating] = useState(false);
   const [generatedNote, setGeneratedNote] = useState<{ title: string; body: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<"generate" | "history">("generate");
+  const [activeTab, setActiveTab] = useState<"generate" | "history" | "settings">("generate");
   const [repoUrl, setRepoUrl] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState("");
@@ -41,6 +41,9 @@ function DashboardPage() {
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [subscribing, setSubscribing] = useState<string | null>(null);
   const [checkoutMsg, setCheckoutMsg] = useState("");
+  const [slackUrl, setSlackUrl] = useState("");
+  const [slackSaved, setSlackSaved] = useState(false);
+  const [slackMsg, setSlackMsg] = useState("");
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -62,6 +65,7 @@ function DashboardPage() {
 
     fetchReleases();
     fetchSubscription();
+    fetchSettings();
   }, []);
 
   // Handle Stripe checkout redirect
@@ -142,6 +146,51 @@ function DashboardPage() {
       setCheckoutMsg("Failed to start checkout. Try again.");
     }
     setSubscribing(null);
+  };
+
+  const fetchSettings = () => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.slackWebhookUrl) setSlackUrl(data.slackWebhookUrl);
+      })
+      .catch(() => {});
+  };
+
+  const handleSaveSlack = () => {
+    setSlackSaved(false);
+    setSlackMsg("");
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slackWebhookUrl: slackUrl }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          setSlackSaved(true);
+          setSlackMsg("Slack webhook saved! Use the 📢 button on releases to post.");
+        }
+      })
+      .catch(() => setSlackMsg("Failed to save. Try again."));
+  };
+
+  const handlePublishSlack = (releaseId: number) => {
+    setSlackMsg("");
+    fetch("/api/publish-slack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ releaseId }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          setSlackMsg("📢 Posted to Slack!");
+        } else {
+          setSlackMsg(`📢 ${data.error}`);
+        }
+      })
+      .catch(() => setSlackMsg("📢 Failed to post to Slack"));
   };
 
   const handleFetchCommits = () => {
@@ -295,6 +344,16 @@ function DashboardPage() {
           >
             📜 History ({releases.length})
           </button>
+          <button
+            onClick={() => setActiveTab("settings")}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+              activeTab === "settings"
+                ? "bg-gray-900 text-white"
+                : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            ⚙️ Settings
+          </button>
         </div>
 
         {activeTab === "generate" && (
@@ -349,10 +408,28 @@ function DashboardPage() {
                     <div className="text-sm text-gray-700 whitespace-pre-wrap">{generatedNote.body}</div>
                   </div>
                   <div className="flex gap-2 mt-4">
-                    <button className="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white hover:bg-gray-800 transition-colors">
+                    <button
+                      onClick={() => {
+                        const text = `${generatedNote?.title}\n\n${generatedNote?.body}`;
+                        navigator.clipboard.writeText(text);
+                      }}
+                      className="rounded-xl bg-gray-900 px-4 py-2 text-xs font-semibold text-white hover:bg-gray-800 transition-colors"
+                    >
                       Copy to clipboard
                     </button>
-                    <button className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                    <button
+                      onClick={() => {
+                        const text = `# ${generatedNote?.title}\n\n${generatedNote?.body}`;
+                        const blob = new Blob([text], { type: "text/markdown" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${generatedNote?.title?.replace(/[^a-z0-9]/gi, "_").toLowerCase() || "release"}.md`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
                       Download
                     </button>
                   </div>
@@ -426,6 +503,16 @@ function DashboardPage() {
                           📧 Notify
                         </button>
                       )}
+                      {release.published === 1 && (
+                        <button
+                          onClick={() => {
+                            handlePublishSlack(release.id);
+                          }}
+                          className="text-xs font-medium px-3 py-1.5 rounded-full bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors"
+                        >
+                          📢 Slack
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -442,6 +529,42 @@ function DashboardPage() {
               )}
               </>
             )}
+          </div>
+        )}
+
+        {activeTab === "settings" && (
+          <div className="rounded-2xl border border-gray-100 bg-white p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">⚙️ Settings</h2>
+            <p className="text-sm text-gray-500 mb-4">Configure integrations to publish your release notes.</p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700">Slack Webhook URL</label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Paste a Slack Incoming Webhook URL to post releases to a channel.
+                </p>
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    value={slackUrl}
+                    onChange={(e) => setSlackUrl(e.target.value)}
+                    placeholder="https://hooks.slack.com/services/T00/B00/xxxxx"
+                    className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  />
+                  <button
+                    onClick={handleSaveSlack}
+                    className="rounded-xl bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800 transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+                {slackMsg && <p className="mt-2 text-xs text-gray-600">{slackMsg}</p>}
+                {slackUrl && (
+                  <p className="mt-3 text-xs text-gray-400">
+                    📢 After saving, go to History and click the 📢 Slack button on a published release to post it.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
