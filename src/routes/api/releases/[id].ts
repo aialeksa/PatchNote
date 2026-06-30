@@ -28,12 +28,24 @@ export const Route = createFileRoute("/api/releases/id")({
           return Response.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const body = (await request.json()) as { published?: boolean };
-        const published = body.published ? 1 : 0;
+        const body = (await request.json()) as { published?: boolean; title?: string; body?: string };
+        const published = body.published !== undefined ? (body.published ? 1 : 0) : undefined;
 
-        run(
-          `UPDATE releases SET published = ${published} WHERE id = ${params.id} AND user_id = ${user.id}`
-        );
+        // Check the release exists and belongs to this user
+        const existing = query(`SELECT id FROM releases WHERE id = ${params.id} AND user_id = ${user.id}`);
+        if (existing.length === 0) {
+          return Response.json({ error: "Not found" }, { status: 404 });
+        }
+
+        // Build update dynamically
+        const updates: string[] = [];
+        if (published !== undefined) updates.push(`published = ${published}`);
+        if (body.title !== undefined) updates.push(`title = '${body.title.replace(/'/g, "''")}'`);
+        if (body.body !== undefined) updates.push(`body = '${body.body.replace(/'/g, "''")}'`);
+
+        if (updates.length > 0) {
+          run(`UPDATE releases SET ${updates.join(", ")} WHERE id = ${params.id} AND user_id = ${user.id}`);
+        }
 
         return Response.json({ success: true });
       },

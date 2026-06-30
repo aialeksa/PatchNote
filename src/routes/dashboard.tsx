@@ -30,6 +30,7 @@ function DashboardPage() {
   const [releases, setReleases] = useState<Release[]>([]);
   const [commits, setCommits] = useState("");
   const [tone, setTone] = useState("technical");
+  const [version, setVersion] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generatedNote, setGeneratedNote] = useState<{ title: string; body: string } | null>(null);
   const [activeTab, setActiveTab] = useState<"generate" | "history" | "settings">("generate");
@@ -44,6 +45,9 @@ function DashboardPage() {
   const [slackUrl, setSlackUrl] = useState("");
   const [slackSaved, setSlackSaved] = useState(false);
   const [slackMsg, setSlackMsg] = useState("");
+  const [editingRelease, setEditingRelease] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -116,7 +120,7 @@ function DashboardPage() {
       const res = await fetch("/api/releases", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ commits: lines, tone }),
+        body: JSON.stringify({ commits: lines, tone, version }),
       });
       const data = await res.json();
       if (data.success) {
@@ -191,6 +195,38 @@ function DashboardPage() {
         }
       })
       .catch(() => setSlackMsg("📢 Failed to post to Slack"));
+  };
+
+  const handleStartEdit = (release: Release) => {
+    setEditingRelease(release.id);
+    setEditTitle(release.title);
+    // Fetch full body for editing
+    fetch(`/api/releases/${release.id}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.release) setEditBody(data.release.body);
+      })
+      .catch(() => {});
+  };
+
+  const handleSaveEdit = (releaseId: number) => {
+    fetch(`/api/releases/${releaseId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: editTitle, body: editBody }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          setEditingRelease(null);
+          fetchReleases();
+        }
+      })
+      .catch(() => {});
+  };
+
+  const handleCancelEdit = () => {
+    setEditingRelease(null);
   };
 
   const handleFetchCommits = () => {
@@ -362,15 +398,24 @@ function DashboardPage() {
             <div className="rounded-2xl border border-gray-100 bg-white p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-gray-900">Commit messages</h2>
-                <select
-                  value={tone}
-                  onChange={(e) => setTone(e.target.value)}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-indigo-400"
-                >
-                  <option value="technical">Technical</option>
-                  <option value="customer">Customer-facing</option>
-                  <option value="marketing">Marketing</option>
-                </select>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={version}
+                    onChange={(e) => setVersion(e.target.value)}
+                    placeholder="v1.0.0"
+                    className="w-24 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-400"
+                  />
+                  <select
+                    value={tone}
+                    onChange={(e) => setTone(e.target.value)}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-indigo-400"
+                  >
+                    <option value="technical">Technical</option>
+                    <option value="customer">Customer-facing</option>
+                    <option value="marketing">Marketing</option>
+                  </select>
+                </div>
               </div>
               <textarea
                 value={commits}
@@ -460,14 +505,51 @@ function DashboardPage() {
               <>
               <div className="divide-y divide-gray-100">
                 {releases.map((release) => (
-                  <div key={release.id} className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{release.title}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {release.summary} · {release.tone} · {new Date(release.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
+                  <div key={release.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+                    {editingRelease === release.id ? (
+                      <div className="space-y-3">
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                        />
+                        <textarea
+                          value={editBody}
+                          onChange={(e) => setEditBody(e.target.value)}
+                          rows={6}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 resize-none"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSaveEdit(release.id)}
+                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={handleCancelEdit}
+                            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{release.title}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {release.summary} · {release.tone} · {new Date(release.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleStartEdit(release)}
+                            className="text-xs font-medium px-2 py-1 rounded text-gray-400 hover:text-gray-600 transition-colors"
+                          >
+                            ✏️
+                          </button>
                       <button
                         onClick={() => {
                           fetch(`/api/releases/${release.id}`, {

@@ -3,13 +3,15 @@ import { getSession } from "~/lib/auth";
 import { query, run } from "~/lib/db";
 
 // Simple release note generator (template-based, replace with LLM later)
-function generateReleaseNotes(commits: string[], tone: string): { title: string; body: string; summary: string } {
+function generateReleaseNotes(commits: string[], tone: string, version?: string): { title: string; body: string; summary: string } {
   const count = commits.length;
   const features = commits.filter(c => /feat|add|new|introduce|implement/i.test(c));
   const fixes = commits.filter(c => /fix|bug|patch|resolve|correct/i.test(c));
   const chores = commits.filter(c => /chore|refactor|clean|update|bump|docs/i.test(c));
 
-  const title = `Release v${new Date().toISOString().slice(0, 10).replace(/-/g, ".")}`;
+  const title = version
+    ? `Release ${version}`
+    : `Release v${new Date().toISOString().slice(0, 10).replace(/-/g, ".")}`;
 
   const tonePrefix = tone === "customer" ? "For our users:" :
     tone === "marketing" ? "🚀 What's new:" :
@@ -63,10 +65,12 @@ export const Route = createFileRoute("/api/releases")({
           commits?: string[];
           tone?: string;
           repo?: string;
+          version?: string;
         };
 
         const commits = body.commits || [];
         const tone = body.tone || "technical";
+        const version = body.version || "";
 
         if (commits.length === 0) {
           return Response.json(
@@ -75,7 +79,7 @@ export const Route = createFileRoute("/api/releases")({
           );
         }
 
-        const { title, body: noteBody, summary } = generateReleaseNotes(commits, tone);
+        const { title, body: noteBody, summary } = generateReleaseNotes(commits, tone, version);
 
         run(
           `INSERT INTO releases (user_id, title, body, summary, tone, repo) VALUES (${user.id}, '${title.replace(/'/g, "''")}', '${noteBody.replace(/'/g, "''")}', '${summary.replace(/'/g, "''")}', '${tone.replace(/'/g, "''")}', '${(body.repo || "").replace(/'/g, "''")}')`
