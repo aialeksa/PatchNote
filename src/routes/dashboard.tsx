@@ -187,6 +187,25 @@ function DashboardPage() {
     navigate({ to: "/" });
   };
 
+  const handleNotifySubscribers = (releaseId: number) => {
+    fetch("/api/publish-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ releaseId }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          setCheckoutMsg(`📧 Email notification queued for subscribers!`);
+        } else {
+          setCheckoutMsg(`📧 ${data.error}`);
+        }
+      })
+      .catch(() => {
+        setCheckoutMsg("📧 Failed to send notification");
+      });
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-gray-50">
@@ -371,7 +390,7 @@ function DashboardPage() {
                         {release.summary} · {release.tone} · {new Date(release.created_at).toLocaleDateString()}
                       </p>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
                           fetch(`/api/releases/${release.id}`, {
@@ -397,6 +416,16 @@ function DashboardPage() {
                       }`}>
                         {release.published ? "Live" : "Draft"}
                       </span>
+                      {release.published === 1 && (
+                        <button
+                          onClick={() => {
+                            handleNotifySubscribers(release.id);
+                          }}
+                          className="text-xs font-medium px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors"
+                        >
+                          📧 Notify
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

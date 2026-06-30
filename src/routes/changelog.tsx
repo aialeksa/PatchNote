@@ -19,6 +19,9 @@ export const Route = createFileRoute("/changelog")({
 function ChangelogPage() {
   const [releases, setReleases] = useState<ChangelogRelease[]>([]);
   const [loading, setLoading] = useState(true);
+  const [subEmail, setSubEmail] = useState("");
+  const [subMsg, setSubMsg] = useState("");
+  const [subCount, setSubCount] = useState(0);
 
   useEffect(() => {
     fetch("/api/changelog")
@@ -26,7 +29,39 @@ function ChangelogPage() {
       .then((data) => setReleases(data.releases || []))
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    fetch("/api/subscribers")
+      .then((r) => r.json())
+      .then((data) => setSubCount(data.count || 0))
+      .catch(() => {});
   }, []);
+
+  const handleSubscribe = () => {
+    const email = subEmail.trim();
+    if (!email.includes("@")) return;
+
+    setSubMsg("");
+    fetch("/api/subscribers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          setSubMsg("✅ Subscribed! You'll get release note emails.");
+          setSubEmail("");
+          fetch("/api/subscribers")
+            .then((r) => r.json())
+            .then((data) => setSubCount(data.count || 0));
+        } else if (data.error === "Already subscribed") {
+          setSubMsg("You're already subscribed!");
+        } else {
+          setSubMsg("Something went wrong. Try again.");
+        }
+      })
+      .catch(() => setSubMsg("Something went wrong. Try again."));
+  };
 
   return (
     <div className="min-h-dvh bg-white">
@@ -55,6 +90,33 @@ function ChangelogPage() {
           <p className="mt-3 text-lg text-gray-500">
             The latest updates and improvements from PatchNotes users.
           </p>
+        </div>
+
+        {/* Subscribe Section */}
+        <div className="rounded-2xl border border-gray-100 bg-indigo-50/30 p-6 mb-10 text-center">
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">
+            📬 Get notified of new releases
+          </h2>
+          <p className="text-sm text-gray-500 mb-4">
+            {subCount > 0 ? `${subCount} subscriber${subCount > 1 ? "s" : ""}` : "Be the first to know"}
+          </p>
+          <div className="flex gap-3 max-w-md mx-auto">
+            <input
+              type="email"
+              value={subEmail}
+              onChange={(e) => setSubEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+            />
+            <button
+              onClick={handleSubscribe}
+              disabled={!subEmail.includes("@")}
+              className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+            >
+              Subscribe
+            </button>
+          </div>
+          {subMsg && <p className="mt-3 text-sm text-gray-600">{subMsg}</p>}
         </div>
 
         {loading ? (
@@ -127,6 +189,8 @@ function ChangelogPage() {
           <a href="/" className="font-medium hover:text-gray-600 transition-colors">PatchNotes</a>
           {" · "}
           <a href="/dashboard" className="underline hover:text-gray-600 transition-colors">Generate your own</a>
+          {" · "}
+          <span>{subCount} subscriber{subCount !== 1 ? "s" : ""}</span>
         </div>
       </footer>
     </div>
